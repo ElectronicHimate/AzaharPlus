@@ -1,0 +1,90 @@
+name: citra-build
+
+on:
+  push:
+    branches: [ "*" ]
+    tags: [ "*" ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  source:
+    if: ${{ !github.head_ref }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Pack
+        run: ./.ci/source.sh
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: artifacts/
+
+  macos:
+    runs-on: ${{ (matrix.target == 'x86_64' && 'macos-13') || 'macos-14' }}
+    strategy:
+      matrix:
+        target: ["x86_64", "arm64"]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: time_macros
+      OS: macos
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set up cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-
+      - name: Install tools
+        run: brew install ccache ninja spirv-tools
+      - name: Build
+        run: ./.ci/macos.sh
+      - name: Prepare outputs for caching
+        run: mv build/bundle $OS-$TARGET
+      - name: Cache outputs for universal build
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.OS }}-${{ env.TARGET }}
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+  
+  macos-universal:
+    runs-on: macos-14
+    needs: macos
+    env:
+      OS: macos
+      TARGET: universal
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download x86_64 build from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.OS }}-x86_64
+          key: ${{ runner.os }}-x86_64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+      - name: Download ARM64 build from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.OS }}-arm64
+          key: ${{ runner.os }}-arm64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+      - name: Create universal app
+        run: ./.ci/macos-universal.sh
+        env:
+          ARTIFACTS: ${{ env.OS }}-x86_64 ${{ env.OS }}-arm64
+      - name: Pack
+        run: ./.ci/pack.sh
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OS }}-${{ env.TARGET }}
+          path: artifacts/
