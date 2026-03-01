@@ -44,7 +44,6 @@ class InputOverlayDrawableButton(
     val opacity: Int
 ) {
     var trackId: Int
-    var isButtonSliding: Boolean
 
     private var isMotionFirstButton = false // mark the first activated button with the current motion
 
@@ -62,7 +61,6 @@ class InputOverlayDrawableButton(
         this.defaultStateBitmap = BitmapDrawable(res, defaultStateBitmap)
         this.pressedStateBitmap = BitmapDrawable(res, pressedStateBitmap)
         trackId = -1
-        isButtonSliding = false
         width = this.defaultStateBitmap.intrinsicWidth
         height = this.defaultStateBitmap.intrinsicHeight
     }
@@ -72,9 +70,8 @@ class InputOverlayDrawableButton(
      *
      * @return true if value was changed
      */
-    fun updateStatus(event: MotionEvent, hasActiveButtons: Boolean, overlay: InputOverlay): Boolean {
+    fun updateStatus(event: MotionEvent, pointerIndex: Int, hasActiveButtons: Boolean, overlay: InputOverlay): Boolean {
         val buttonSliding = EmulationMenuSettings.buttonSlide
-        val pointerIndex = event.actionIndex
         val xPosition = event.getX(pointerIndex).toInt()
         val yPosition = event.getY(pointerIndex).toInt()
         val pointerId = event.getPointerId(pointerIndex)
@@ -107,11 +104,14 @@ class InputOverlayDrawableButton(
                 if (inside || trackId != pointerId) {
                     return false
                 }
+
                 // prevent the first (directly pressed) button to deactivate when sliding off
                 if (buttonSliding == ButtonSlidingMode.Alternative.int && isMotionFirstButton) {
                     return false
                 }
-                buttonUp(overlay, true)
+
+                val preserveTrackId = (buttonSliding != ButtonSlidingMode.Disabled.int)
+                buttonUp(overlay, preserveTrackId)
                 return true
             } else {
                 // button was not yet pressed
@@ -134,11 +134,12 @@ class InputOverlayDrawableButton(
         overlay.hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 
-    private fun buttonUp(overlay: InputOverlay, _isButtonSliding: Boolean) {
+    private fun buttonUp(overlay: InputOverlay, preserveTrackId: Boolean) {
         pressedState = false
         isMotionFirstButton = false
-        trackId = -1
-        isButtonSliding = _isButtonSliding
+        if (!preserveTrackId) {
+            trackId = -1
+        }
         overlay.hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY_RELEASE)
     }
 

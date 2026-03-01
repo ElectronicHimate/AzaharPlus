@@ -51,7 +51,64 @@ public:
     virtual void EnableForStacktrace() = 0;
 
     virtual void Flush() = 0;
+
+    virtual void Close() = 0;
 };
+
+#ifdef HAVE_LIBRETRO
+/**
+ * LibRetro backend
+ */
+class LibRetroBackend : public Backend {
+public:
+    explicit LibRetroBackend() {}
+    explicit LibRetroBackend(retro_log_printf_t callback) : callback(callback) {}
+
+    ~LibRetroBackend() override = default;
+
+    void Write(const Entry& entry) override {
+        if (callback == nullptr) {
+            return;
+        }
+        retro_log_level log_level;
+
+        switch (entry.log_level) {
+        case Common::Log::Level::Trace:
+            log_level = retro_log_level::RETRO_LOG_DEBUG;
+            break;
+        case Common::Log::Level::Debug:
+            log_level = retro_log_level::RETRO_LOG_DEBUG;
+            break;
+        case Common::Log::Level::Info:
+            log_level = retro_log_level::RETRO_LOG_INFO;
+            break;
+        case Common::Log::Level::Warning:
+            log_level = retro_log_level::RETRO_LOG_WARN;
+            break;
+        case Common::Log::Level::Error:
+            log_level = retro_log_level::RETRO_LOG_ERROR;
+            break;
+        case Common::Log::Level::Critical:
+            log_level = retro_log_level::RETRO_LOG_ERROR;
+            break;
+        default:
+            log_level = retro_log_level::RETRO_LOG_DUMMY;
+        }
+
+        auto str = FormatLogMessage(entry).append(1, '\n');
+        callback(log_level, str.c_str());
+    }
+
+    void Flush() override {}
+
+    void Close() override {}
+
+    void EnableForStacktrace() override {}
+
+private:
+    retro_log_printf_t callback = nullptr;
+};
+#endif
 
 /**
  * Backend that writes to stderr and with color
@@ -70,6 +127,10 @@ public:
 
     void Flush() override {
         std::fflush(stderr);
+    }
+
+    void Close() override {
+        enabled = false;
     }
 
     void EnableForStacktrace() override {
@@ -130,6 +191,11 @@ public:
         file->Flush();
     }
 
+    void Close() override {
+        file->Close();
+        enabled = false;
+    }
+
     void EnableForStacktrace() override {
         enabled = true;
         bytes_written = 0;
@@ -158,6 +224,8 @@ public:
 
     void Flush() override {}
 
+    void Close() override {}
+
     void EnableForStacktrace() override {}
 };
 
@@ -177,11 +245,14 @@ public:
 
     void Flush() override {}
 
+    void Close() override {}
+
     void EnableForStacktrace() override {}
 };
 #endif
 
 bool initialization_in_progress_suppress_logging = true;
+bool logging_initialized = false;
 
 #ifdef CITRA_LINUX_GCC_BACKTRACE
 [[noreturn]] void SleepForever() {
@@ -202,7 +273,19 @@ public:
         }
         return *instance;
     }
-
+#ifdef HAVE_LIBRETRO
+    static void Initialize(retro_log_printf_t callback) {
+        if (instance) {
+            LOG_WARNING(Log, "Reinitializing logging backend");
+            return;
+        }
+        initialization_in_progress_suppress_logging = true;
+        Filter filter;
+        filter.ParseFilterString(Settings::values.log_filter.GetValue());
+        instance = std::unique_ptr<Impl, decltype(&Deleter)>(new Impl(callback, filter), Deleter);
+        initialization_in_progress_suppress_logging = false;
+    }
+#endif
     static void Initialize(std::string_view log_file) {
         if (instance) {
             LOG_WARNING(Log, "Reinitializing logging backend");
@@ -216,6 +299,7 @@ public:
         instance = std::unique_ptr<Impl, decltype(&Deleter)>(
             new Impl(fmt::format("{}{}", log_dir, log_file), filter), Deleter);
         initialization_in_progress_suppress_logging = false;
+        logging_initialized = true;
     }
 
     static void Start() {
@@ -249,17 +333,18 @@ public:
         return true;
     }
 
+    const Filter& GetFilter() const {
+        return filter;
+    }
+
     void SetColorConsoleBackendEnabled(bool enabled) {
         color_console_backend.SetEnabled(enabled);
     }
 
     void PushEntry(Class log_class, Level log_level, const char* filename, unsigned int line_num,
                    const char* function, std::string message) {
-        if (!filter.CheckMessage(log_class, log_level)) {
-            return;
-        }
-        Entry new_entry =
-            CreateEntry(log_class, log_level, filename, line_num, function, std::move(message));
+        Entry new_entry = CreateEntry(log_class, log_level, filename, line_num, function,
+                                      std::move(message), time_origin);
         if (!regex_filter.empty() &&
             !boost::regex_search(FormatLogMessage(new_entry), regex_filter)) {
             return;
@@ -274,7 +359,29 @@ public:
         }
     }
 
+    static Entry CreateEntry(Class log_class, Level log_level, const char* filename,
+                             unsigned int line_nr, const char* function, std::string&& message,
+                             const std::chrono::steady_clock::time_point& time_origin) {
+        using std::chrono::duration_cast;
+        using std::chrono::microseconds;
+        using std::chrono::steady_clock;
+
+        return {
+            .timestamp = duration_cast<microseconds>(steady_clock::now() - time_origin),
+            .log_class = log_class,
+            .log_level = log_level,
+            .filename = filename,
+            .line_num = line_nr,
+            .function = function,
+            .message = std::move(message),
+        };
+    }
+
 private:
+#ifdef HAVE_LIBRETRO
+    Impl(retro_log_printf_t callback, const Filter& filter_)
+        : filter{filter_}, file_backend{""}, libretro_backend{callback} {}
+#endif
     Impl(const std::string& file_backend_filename, const Filter& filter_)
         : filter{filter_}, file_backend{file_backend_filename} {
 #ifdef CITRA_LINUX_GCC_BACKTRACE
@@ -295,9 +402,9 @@ private:
             }
             backend_thread.request_stop();
             backend_thread.join();
-            const auto signal_entry =
-                CreateEntry(Class::Log, Level::Critical, "?", 0, "?",
-                            fmt::vformat("Received signal {}", fmt::make_format_args(sig)));
+            const auto signal_entry = CreateEntry(
+                Class::Log, Level::Critical, "?", 0, "?",
+                fmt::vformat("Received signal {}", fmt::make_format_args(sig)), time_origin);
             ForEachBackend([&signal_entry](Backend& backend) {
                 backend.EnableForStacktrace();
                 backend.Write(signal_entry);
@@ -310,12 +417,13 @@ private:
                     abort();
                 }
                 line.pop_back(); // Remove newline
-                const auto frame_entry =
-                    CreateEntry(Class::Log, Level::Critical, "?", 0, "?", std::move(line));
+                const auto frame_entry = CreateEntry(Class::Log, Level::Critical, "?", 0, "?",
+                                                     std::move(line), time_origin);
                 ForEachBackend([&frame_entry](Backend& backend) { backend.Write(frame_entry); });
             }
             using namespace std::literals;
-            const auto rip_entry = CreateEntry(Class::Log, Level::Critical, "?", 0, "?", "RIP"s);
+            const auto rip_entry =
+                CreateEntry(Class::Log, Level::Critical, "?", 0, "?", "RIP"s, time_origin);
             ForEachBackend([&rip_entry](Backend& backend) {
                 backend.Write(rip_entry);
                 backend.Flush();
@@ -348,6 +456,8 @@ private:
             };
             while (!stop_token.stop_requested()) {
                 message_queue.PopWait(entry, stop_token);
+                // Only write the log if something was actually popped (entry.filename != nullptr)
+                // (for example, when the stop token is signaled).
                 if (entry.filename != nullptr) {
                     write_logs();
                 }
@@ -367,33 +477,23 @@ private:
             backend_thread.join();
         }
 
-        ForEachBackend([](Backend& backend) { backend.Flush(); });
-    }
-
-    Entry CreateEntry(Class log_class, Level log_level, const char* filename, unsigned int line_nr,
-                      const char* function, std::string&& message) const {
-        using std::chrono::duration_cast;
-        using std::chrono::microseconds;
-        using std::chrono::steady_clock;
-
-        return {
-            .timestamp = duration_cast<microseconds>(steady_clock::now() - time_origin),
-            .log_class = log_class,
-            .log_level = log_level,
-            .filename = filename,
-            .line_num = line_nr,
-            .function = function,
-            .message = std::move(message),
-        };
+        ForEachBackend([](Backend& backend) {
+            backend.Flush();
+            backend.Close();
+        });
     }
 
     void ForEachBackend(auto lambda) {
+#ifdef HAVE_LIBRETRO
+        lambda(static_cast<Backend&>(libretro_backend));
+#else
         lambda(static_cast<Backend&>(debugger_backend));
         lambda(static_cast<Backend&>(color_console_backend));
         lambda(static_cast<Backend&>(file_backend));
 #ifdef ANDROID
         lambda(static_cast<Backend&>(lc_backend));
-#endif
+#endif // ANDROID
+#endif // HAVE_LIBRETRO
     }
 
     static void Deleter(Impl* ptr) {
@@ -440,6 +540,9 @@ private:
 #ifdef ANDROID
     LogcatBackend lc_backend{};
 #endif
+#ifdef HAVE_LIBRETRO
+    LibRetroBackend libretro_backend;
+#endif
 
     MPSCQueue<Entry> message_queue{};
     std::chrono::steady_clock::time_point time_origin{std::chrono::steady_clock::now()};
@@ -453,6 +556,13 @@ private:
 #endif
 };
 } // namespace
+
+#ifdef HAVE_LIBRETRO
+void LibRetroStart(retro_log_printf_t callback) {
+    Impl::Initialize(callback);
+    Impl::Start();
+}
+#endif
 
 void Initialize(std::string_view log_file) {
     Impl::Initialize(log_file.empty() ? LOG_FILE : log_file);
@@ -485,9 +595,22 @@ void SetColorConsoleBackendEnabled(bool enabled) {
 void FmtLogMessageImpl(Class log_class, Level log_level, const char* filename,
                        unsigned int line_num, const char* function, fmt::string_view format,
                        const fmt::format_args& args) {
-    if (!initialization_in_progress_suppress_logging) {
+    if (initialization_in_progress_suppress_logging) [[unlikely]] {
+        return;
+    }
+
+    if (logging_initialized) [[likely]] {
+        if (!Impl::Instance().GetFilter().CheckMessage(log_class, log_level)) {
+            return;
+        }
         Impl::Instance().PushEntry(log_class, log_level, filename, line_num, function,
                                    fmt::vformat(format, args));
+    } else {
+        // In the rare case that logging occurs before initialization, write the
+        // message to stderr to preserve useful debug information.
+        Entry new_entry = Impl::CreateEntry(log_class, log_level, filename, line_num, function,
+                                            fmt::vformat(format, args), {});
+        PrintMessage(new_entry);
     }
 }
 } // namespace Common::Log

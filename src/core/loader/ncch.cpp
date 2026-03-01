@@ -36,12 +36,18 @@ namespace Loader {
 
 using namespace Common::Literals;
 static constexpr u64 UPDATE_TID_HIGH = 0x0004000e00000000;
+static constexpr u64 DLP_CHILD_TID_HIGH = 0x0004000100000000;
 
 static std::string g_program_id;
 
 std::string getProgramId()
 {
 	return g_program_id;
+}
+
+void resetProgramId()
+{
+	g_program_id = "";
 }
 
 FileType AppLoader_NCCH::IdentifyType(FileUtil::IOFile* file) {
@@ -132,6 +138,23 @@ AppLoader_NCCH::LoadNew3dsHwCapabilities() {
         static_cast<Kernel::New3dsMemoryMode>(ncch_caps.n3ds_mode),
     };
     return std::make_pair(std::move(caps), ResultStatus::Success);
+}
+
+bool AppLoader_NCCH::IsN3DSExclusive() {
+    if (!is_loaded) {
+        ResultStatus res = base_ncch.Load();
+        if (res != ResultStatus::Success) {
+            return false;
+        }
+    }
+
+    std::vector<u8> smdh_buffer;
+    if (ReadIcon(smdh_buffer) == ResultStatus::Success && IsValidSMDH(smdh_buffer)) {
+        SMDH* smdh = reinterpret_cast<SMDH*>(smdh_buffer.data());
+        return smdh->flags.n3ds_exclusive != 0;
+    }
+
+    return false;
 }
 
 ResultStatus AppLoader_NCCH::LoadExec(std::shared_ptr<Kernel::Process>& process) {
@@ -307,12 +330,16 @@ ResultStatus AppLoader_NCCH::Load(std::shared_ptr<Kernel::Process>& process) {
 	g_program_id = program_id;
     LOG_INFO(Loader, "Program ID: {}", program_id);
 
-    u64 update_tid = (ncch_program_id & 0xFFFFFFFFULL) | UPDATE_TID_HIGH;
-    update_ncch.OpenFile(
-        Service::AM::GetTitleContentPath(Service::FS::MediaType::SDMC, update_tid));
-    result = update_ncch.Load();
-    if (result == ResultStatus::Success) {
-        overlay_ncch = &update_ncch;
+    bool is_dlp_child = (ncch_program_id & 0xFFFFFFFF00000000) == DLP_CHILD_TID_HIGH;
+
+    if (!is_dlp_child) {
+        u64 update_tid = (ncch_program_id & 0xFFFFFFFFULL) | UPDATE_TID_HIGH;
+        update_ncch.OpenFile(
+            Service::AM::GetTitleContentPath(Service::FS::MediaType::SDMC, update_tid));
+        result = update_ncch.Load();
+        if (result == ResultStatus::Success) {
+            overlay_ncch = &update_ncch;
+        }
     }
 
     if (auto room_member = Network::GetRoomMember().lock()) {

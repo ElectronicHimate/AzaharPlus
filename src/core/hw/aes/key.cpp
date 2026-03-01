@@ -1,6 +1,6 @@
 //FILE MODIFIED BY AzaharPlus APRIL 2025
 
-// Copyright 2017 Citra Emulator Project
+// Copyright Citra Emulator Project / Azahar Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
@@ -137,6 +137,9 @@ AESIV nfc_iv;
 
 AESKey otp_key;
 AESIV otp_iv;
+
+// gets xor'd with the mac address to produce the final iv
+AESIV dlp_checksum_mod_iv;
 
 KeySlot movable_key;
 KeySlot movable_cmac;
@@ -324,6 +327,11 @@ void LoadPresetKeys() {
 
         if (name == "nfcIv") {
             nfc_iv = key;
+            continue;
+        }
+
+        if (name == "dlpChecksumModIv") {
+            dlp_checksum_mod_iv = key;
             continue;
         }
 
@@ -573,6 +581,8 @@ nfcSecret1Phrase=6c6f636b65642073656372657400
 nfcSecret1Seed=fdc8a07694b89e4c47d37de8ce5c74c1
 nfcSecret1HmacKey=7f752d2873a20017fef85c0575904b6d
 nfcIv=4fd39a6e79fceaad99904db8ee38e9db
+# DLP Checksum
+dlpChecksumModIv=fe449ac13ae3b4095011d18944107833
 :RSA
 # Slots
 slot0x00X=c034829a11c7116a08633e89a78ca0919779da8cc967077afc60e1786247e5068b9a76588a15f0304b3887b5147c259f7a2e6e480aceb0be35f0c5885ea2d8838fd6aafe45ac58fc08d4d0569d3cd3b09f9c6985fcd5c7152ebc54a885d6b11129b503611510bbfa0b07552d5800ecf636ef90d101cd475a3f4274e0c1e828b2bb516c8cd80f95f5db6a239083435509c0190e5d218b19c3bebc2a3aa73cebf53e7e4998d9be01a440f3f1c0f3157ba6f65a7be9e059d4d26f9de997141979df2ceaa175d91db2079051978f805d6f97741b6db4e96e3305611392b4b7ca76f0b45387c40d5879cde6b1509062216cb9ac21f3510ccd6df4da8f581ff86d2f31
@@ -672,6 +682,10 @@ std::pair<AESKey, AESIV> GetOTPKeyIV() {
 
 const AESKey& GetMovableKey(bool cmac_key) {
     return cmac_key ? movable_cmac.normal.value() : movable_key.normal.value();
+}
+
+const AESIV& GetDlpChecksumModIv() {
+    return dlp_checksum_mod_iv;
 }
 
 } // namespace HW::AES

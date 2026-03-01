@@ -57,11 +57,13 @@ void ConfigureEnhancements::SetConfiguration() {
 
     ui->render_3d_combobox->setCurrentIndex(
         static_cast<int>(Settings::values.render_3d.GetValue()));
+    ui->swap_eyes_3d->setChecked(Settings::values.swap_eyes_3d.GetValue());
     ui->factor_3d->setValue(Settings::values.factor_3d.GetValue());
     ui->mono_rendering_eye->setCurrentIndex(
         static_cast<int>(Settings::values.mono_render_option.GetValue()));
     updateShaders(Settings::values.render_3d.GetValue());
     ui->toggle_linear_filter->setChecked(Settings::values.filter_mode.GetValue());
+    ui->use_integer_scaling->setChecked(Settings::values.use_integer_scaling.GetValue());
     ui->toggle_dump_textures->setChecked(Settings::values.dump_textures.GetValue());
     ui->toggle_custom_textures->setChecked(Settings::values.custom_textures.GetValue());
     ui->toggle_preload_textures->setChecked(Settings::values.preload_textures.GetValue());
@@ -111,6 +113,7 @@ void ConfigureEnhancements::ApplyConfiguration() {
                                              ui->resolution_factor_combobox);
     Settings::values.render_3d =
         static_cast<Settings::StereoRenderOption>(ui->render_3d_combobox->currentIndex());
+    Settings::values.swap_eyes_3d = ui->swap_eyes_3d->isChecked();
     Settings::values.factor_3d = ui->factor_3d->value();
     Settings::values.mono_render_option =
         static_cast<Settings::MonoRenderOption>(ui->mono_rendering_eye->currentIndex());
@@ -125,6 +128,8 @@ void ConfigureEnhancements::ApplyConfiguration() {
 
     ConfigurationShared::ApplyPerGameSetting(&Settings::values.filter_mode,
                                              ui->toggle_linear_filter, linear_filter);
+    ConfigurationShared::ApplyPerGameSetting(&Settings::values.use_integer_scaling,
+                                             ui->use_integer_scaling, use_integer_scaling);
     ConfigurationShared::ApplyPerGameSetting(&Settings::values.texture_filter,
                                              ui->texture_filter_combobox);
     ConfigurationShared::ApplyPerGameSetting(&Settings::values.dump_textures,
@@ -146,6 +151,7 @@ void ConfigureEnhancements::SetupPerGameUI() {
         ui->widget_resolution->setEnabled(Settings::values.resolution_factor.UsingGlobal());
         ui->widget_texture_filter->setEnabled(Settings::values.texture_filter.UsingGlobal());
         ui->toggle_linear_filter->setEnabled(Settings::values.filter_mode.UsingGlobal());
+        ui->use_integer_scaling->setEnabled(Settings::values.use_integer_scaling.UsingGlobal());
         ui->toggle_dump_textures->setEnabled(Settings::values.dump_textures.UsingGlobal());
         ui->toggle_custom_textures->setEnabled(Settings::values.custom_textures.UsingGlobal());
         ui->toggle_preload_textures->setEnabled(Settings::values.preload_textures.UsingGlobal());
@@ -164,6 +170,8 @@ void ConfigureEnhancements::SetupPerGameUI() {
 
     ConfigurationShared::SetColoredTristate(ui->toggle_linear_filter, Settings::values.filter_mode,
                                             linear_filter);
+    ConfigurationShared::SetColoredTristate(
+        ui->use_integer_scaling, Settings::values.use_integer_scaling, use_integer_scaling);
     ConfigurationShared::SetColoredTristate(ui->toggle_dump_textures,
                                             Settings::values.dump_textures, dump_textures);
     ConfigurationShared::SetColoredTristate(ui->toggle_custom_textures,

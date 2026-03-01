@@ -7,8 +7,12 @@
 #include "common/common_types.h"
 #include "common/math_util.h"
 #include "video_core/renderer_base.h"
+#ifdef HAVE_LIBRETRO
+#include "citra_libretro/libretro_vk.h"
+#else
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_present_window.h"
+#endif
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_render_manager.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -74,15 +78,13 @@ public:
         return &rasterizer;
     }
 
-    void NotifySurfaceChanged() override {
-        main_window.NotifySurfaceChanged();
-    }
+    void NotifySurfaceChanged(bool second) override;
 
     void SwapBuffers() override;
     void TryPresent(int timeout_ms, bool is_secondary) override {}
 
 private:
-    void ReloadPipeline();
+    void ReloadPipeline(Settings::StereoRenderOption render_3d);
     void CompileShaders();
     void BuildLayouts();
     void BuildPipelines();
@@ -100,12 +102,16 @@ private:
     void DrawScreens(Frame* frame, const Layout::FramebufferLayout& layout, bool flipped);
     void DrawBottomScreen(const Layout::FramebufferLayout& layout,
                           const Common::Rectangle<u32>& bottom_screen);
+
     void DrawTopScreen(const Layout::FramebufferLayout& layout,
                        const Common::Rectangle<u32>& top_screen);
     void DrawSingleScreen(u32 screen_id, float x, float y, float w, float h,
                           Layout::DisplayOrientation orientation);
     void DrawSingleScreenStereo(u32 screen_id_l, u32 screen_id_r, float x, float y, float w,
                                 float h, Layout::DisplayOrientation orientation);
+
+    void ApplySecondLayerOpacity(float alpha);
+
     void LoadFBToScreenInfo(const Pica::FramebufferConfig& framebuffer, ScreenInfo& screen_info,
                             bool right_eye);
     void FillScreen(Common::Vec3<u8> color, const TextureInfo& texture);
@@ -114,14 +120,18 @@ private:
     Memory::MemorySystem& memory;
     Pica::PicaCore& pica;
 
+#ifdef HAVE_LIBRETRO
+    LibRetroVKInstance instance;
+#else
     Instance instance;
+#endif
     Scheduler scheduler;
     RenderManager renderpass_cache;
-    PresentWindow main_window;
+    PresentWindow main_present_window;
     StreamBuffer vertex_buffer;
     DescriptorUpdateQueue update_queue;
     RasterizerVulkan rasterizer;
-    std::unique_ptr<PresentWindow> second_window;
+    std::unique_ptr<PresentWindow> secondary_present_window_ptr;
 
     DescriptorHeap present_heap;
     vk::UniquePipelineLayout present_pipeline_layout;

@@ -17,6 +17,8 @@ if (APPLE)
 
     # Define app bundle metadata.
     include(GenerateBuildInfo)
+    set(SRC_DIR "${PROJECT_SOURCE_DIR}")
+    generate_build_info()
     set_target_properties(citra_meta PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${DIST_DIR}/Info.plist.in"
@@ -43,10 +45,6 @@ endif()
 
 target_link_libraries(citra_meta PRIVATE fmt)
 
-if (ENABLE_SDL2_FRONTEND)
-    target_link_libraries(citra_meta PRIVATE citra_sdl)
-endif()
-
 if (ENABLE_QT)
     target_link_libraries(citra_meta PRIVATE citra_qt)
     target_link_libraries(citra_meta PRIVATE Boost::boost Qt6::Widgets)
@@ -58,6 +56,11 @@ endif()
 
 if (ENABLE_QT AND UNIX AND NOT APPLE)
     target_link_libraries(citra_meta PRIVATE Qt6::DBus gamemode)
+endif()
+
+if (ENABLE_QT AND APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+    target_link_libraries(citra_meta PRIVATE Qt6::GuiPrivate)
 endif()
 
 if (ENABLE_QT AND USE_DISCORD_PRESENCE)
