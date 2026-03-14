@@ -906,15 +906,7 @@ bool CIAFile::Close() {
             if (abort) {
                 break;
             }
-
-            // If the file to delete is the current launched rom, signal the system to delete
-            // the current rom instead of deleting it now, once all the handles to the file
-            // are closed.
-            std::string to_delete =
-                GetTitleContentPath(media_type, old_tmd.GetTitleID(), old_index);
-            if (!system.IsPoweredOn() || !system.SetSelfDelete(to_delete)) {
-                FileUtil::Delete(to_delete);
-            }
+            FileUtil::Delete(GetTitleContentPath(media_type, old_tmd.GetTitleID(), old_index));
         }
 
         FileUtil::Delete(old_tmd_path);
@@ -2371,7 +2363,7 @@ void Module::Interface::GetProductCode(Kernel::HLERequestContext& ctx) {
 
         ProductCode product_code;
 
-        IPC::RequestBuilder rb = rp.MakeBuilder(6, 0);
+        IPC::RequestBuilder rb = rp.MakeBuilder(5, 0);
         FileSys::NCCHContainer ncch(path);
         ncch.Load();
         std::memcpy(&product_code.code, &ncch.ncch_header.product_code, 0x10);
@@ -2966,13 +2958,17 @@ void Module::Interface::GetDeviceID(Kernel::HLERequestContext& ctx) {
 	        return;
 	    }
 
-	    deviceID = otp.GetDeviceID();
-	    if (am->force_new_device_id) {
-	        deviceID |= 0x80000000;
-	    }
-	    if (am->force_old_device_id) {
-	        deviceID &= ~0x80000000;
-	    }
+        deviceID = otp.GetDeviceID();
+        if (am->force_new_device_id || am->force_old_device_id) {
+            if (am->force_new_device_id) {
+                deviceID |= 0x80000000;
+            }
+            if (am->force_old_device_id) {
+                deviceID &= ~0x80000000;
+            }
+        } else if (Settings::values.toggle_unique_data_console_type) {
+            deviceID ^= 0x80000000;
+        }
     }
 
     IPC::RequestBuilder rb = rp.MakeBuilder(3, 0);
@@ -2986,7 +2982,7 @@ void Module::Interface::GetNumImportTitleContextsImpl(IPC::RequestParser& rp,
                                                       bool include_installing,
                                                       bool include_finalizing) {
 
-    IPC::RequestBuilder rb = rp.MakeBuilder(3, 0);
+    IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(ResultSuccess);
 
 #ifdef todotodo
@@ -3029,7 +3025,7 @@ void Module::Interface::GetImportTitleContextListImpl(IPC::RequestParser& rp,
         }
     }
 
-    IPC::RequestBuilder rb = rp.MakeBuilder(3, 0);
+    IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(ResultSuccess);
     rb.Push(written);
 }
